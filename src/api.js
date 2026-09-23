@@ -1,7 +1,7 @@
 import express from "express";
 import { config } from "./config.js";
 import * as db from "./db.js";
-import { ingestKnowledge, KB_CATEGORIES } from "./kb.js";
+import { ingestKnowledge, ingestFile, ingestUrl, KB_CATEGORIES } from "./kb.js";
 import { logger } from "./logger.js";
 import { CREDITS_PER_REPLY, getPlan, PLANS } from "./plans.js";
 import { generateReply } from "./reply.js";
@@ -139,13 +139,13 @@ export function createApi(sessions) {
   app.post("/tenants/:id/kb/files", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
     const { category, filename, data_b64 } = req.body ?? {};
     if (!data_b64) return res.status(400).json({ error: "data_b64 is required" });
-    const result = await kb.ingestFile(req.tenant.id, category ?? "business", filename, Buffer.from(data_b64, "base64"));
+    const result = await ingestFile(req.tenant.id, category ?? "business", filename, Buffer.from(data_b64, "base64"));
     res.json(result);
   }));
   app.post("/tenants/:id/kb/url", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
     const { category, url } = req.body ?? {};
     if (!url) return res.status(400).json({ error: "url is required" });
-    res.json(await kb.ingestUrl(req.tenant.id, category ?? "business", url));
+    res.json(await ingestUrl(req.tenant.id, category ?? "business", url));
   }));
   app.post("/tenants/:id/session/restart", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
     await sessions.stopTenant(req.tenant.id);

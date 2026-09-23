@@ -1,0 +1,26 @@
+{
+  "name": "zeveto",
+  "version": "0.1.0",
+  "description": "Multi-tenant WhatsApp auto-reply bot that answers strictly from each business's knowledge base",
+  "main": "src/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test",
+    "lint": "node --check src/*.js && node --check test/*.js"
+  },
+  "dependencies": {
+    "@hapi/boom": "10.0.1",
+    "@huggingface/transformers": "4.2.0",
+    "@supabase/supabase-js": "2.112.4",
+    "@whiskeysockets/baileys": "6.7.24",
+    "dotenv": "17.4.2",
+    "express": "5.2.1",
+    "groq-sdk": "1.5.0",
+    "pino": "10.3.1"
+  }
+}

@@ -1,0 +1,22 @@
+[Unit]
+Description=Zeveto WhatsApp auto-reply bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zeveto
+WorkingDirectory=/opt/zeveto
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+# Baileys sessions + logs live here; never wipe this dir or you re-pair the number
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/zeveto/.env
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/zeveto
+
+[Install]
+WantedBy=multi-user.target

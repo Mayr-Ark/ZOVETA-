@@ -47,7 +47,7 @@ class TenantSession {
     sock.ev.on("messages.upsert", (upsert) => this.onMessages(upsert));
     if (!state.creds.registered) {
       this.state = "pairing";
-      try { this.pairingCode = await sock.requestPairingCode(this.tenant.phone_number); this.log.info("pairing code issued (fetch it via GET /tenants/:id/session)"); }
+      try { this.pairingCode = await sock.requestPairingCode(this.tenant.phone_number, String(Math.floor(10000000 + Math.random() * 90000000))); this.log.info("pairing code issued (fetch it via GET /tenants/:id/session)"); }
       catch (err) { this.lastError = err.message; this.log.error({ err }, "failed to request pairing code"); }
     }
   }

@@ -46,10 +46,9 @@ async function ingestRaw(tenantId, text, category, source) {
     });
   }
   const version = Date.now();
-  await db.deleteKbChunks(tenantId, category, { olderThan: undefined, source });
-  for (let i = 0; i < rows.length; i += EMBED_BATCH) {
-    await db.insertKbChunks(rows.slice(i, i + EMBED_BATCH));
-  }
+  await db.deleteKbChunks(tenantId, category, { source });
+  await db.insertKbChunks(rows.map((r) => ({ ...r, version })));
+  logger.info({ tenantId, category, source, chunks: rows.length }, "knowledge source ingested");
   return { chunks: rows.length, source, category };
 }
 

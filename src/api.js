@@ -186,14 +186,6 @@ export function createApi(sessions) {
 
 
 
-  app.use((err, _req, res, _next) => {
-    logger.error({ err }, "api error");
-    res.status(500).json({ error: err.message });
-  });
-  return app;
-
-  return app;
-
   // ---------- campaigns: broadcasts & follow-ups ----------
   app.post("/tenants/:id/broadcasts", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
     const { message, audience = "all" } = req.body ?? {};
@@ -256,4 +248,10 @@ export function createApi(sessions) {
     if (q.length < 2) return res.json([]);
     res.json(await db.searchMessages(req.tenant.id, q));
   }));
+
+  app.use((err, _req, res, _next) => {
+    logger.error({ err }, "api error");
+    res.status(500).json({ error: err.message });
+  });
+  return app;
 }

@@ -17,7 +17,7 @@
     "@hapi/boom": "10.0.1",
     "@huggingface/transformers": "4.2.0",
     "@supabase/supabase-js": "2.112.4",
-    "@whiskeysockets/baileys": "6.7.24",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "dotenv": "17.4.2",
     "express": "5.2.1",
     "groq-sdk": "1.5.0",

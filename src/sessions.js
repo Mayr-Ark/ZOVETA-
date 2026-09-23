@@ -5,6 +5,7 @@ import { Boom } from "@hapi/boom";
 import { createChannelAdapter } from "./channel.js";
 import { config } from "./config.js";
 import * as db from "./db.js";
+import { persistMemory } from "./reply.js";
 import { logger } from "./logger.js";
 import { generateReply } from "./reply.js";
 
@@ -92,7 +93,7 @@ class TenantSession {
         if (isJidGroup(from) || isJidBroadcast(from) || isJidNewsletter(from)) continue;
         const ownerJid = jidNormalizedUser(from);
         db.saveMessage({ tenant_id: this.tenant.id, chat_jid: ownerJid, role: "owner", content: text }).catch(() => {});
-        db.pauseChat(this.tenant.id, ownerJid, 24)
+        db.pauseChat(this.tenant.id, ownerJid, (this.tenant.auto_resume_minutes ?? 1440) / 60)
           .then(() => this.log.info({ chatJid: ownerJid }, "owner replied from phone — AI paused 24h for this chat"))
           .catch((err) => this.log.warn({ err }, "failed to pause chat after owner reply"));
         continue;
@@ -115,6 +116,11 @@ class TenantSession {
     });
   }
 
+  sendOutbound(chatJid, text) {
+    const jitter = 800 + Math.floor(Math.random() * 1700);
+    return new Promise((resolve) => setTimeout(resolve, jitter)).then(() => this.sock.sendMessage(chatJid, { text }));
+  }
+
   enqueue(chatJid, task) {
     const previous = this.chatQueues.get(chatJid) ?? Promise.resolve();
     const next = previous.then(task).catch((err) => this.log.error({ err, chatJid }, "message handling failed"));
@@ -129,9 +135,11 @@ class TenantSession {
     db.upsertContact(this.tenant.id, chatJid, customerName)
       .catch((err) => this.log.warn({ err, chatJid }, "failed to save contact profile"));
     await channel.setComposing(channelChatId);
+    if (this.tenant.ai_enabled === false) return this.log.info({ chatJid }, "AI replies switched off — staying silent");
     const result = await generateReply({ tenant: this.tenant, chatJid, userText: text, customerName });
     await channel.sendText(channelChatId, result.text);
     await result.save();
+    persistMemory(this.tenant.id, chatJid, text).catch(() => {});
     this.log.info({ chatJid, grounded: result.grounded }, "reply sent");
   }
 }
@@ -157,5 +165,10 @@ export class SessionManager {
   async stopTenant(tenantId) { const session = this.sessions.get(tenantId); if (!session) return; await session.stop(); this.sessions.delete(tenantId); }
   async logoutTenant(tenantId) { const session = this.sessions.get(tenantId); if (!session) return; await session.logout(); this.sessions.delete(tenantId); }
   status(tenantId) { return this.sessions.get(tenantId)?.status() ?? { tenantId, state: "not_running" }; }
+  async sendOutbound(tenantId, chatJid, text) {
+    const s = this.sessions.get(tenantId);
+    if (!s || s.state !== "connected") throw new Error("session not connected");
+    return s.sendOutbound(chatJid, text);
+  }
   async stopAll() { await Promise.all([...this.sessions.keys()].map((id) => this.stopTenant(id))); }
 }

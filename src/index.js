@@ -2,8 +2,10 @@ import { createApi } from "./api.js";
 import { config } from "./config.js";
 import { logger } from "./logger.js";
 import { SessionManager } from "./sessions.js";
+import { start as startScheduler } from "./scheduler.js";
 
 const sessions = new SessionManager();
+startScheduler(sessions);
 const app = createApi(sessions);
 
 const server = app.listen(config.port, () => {

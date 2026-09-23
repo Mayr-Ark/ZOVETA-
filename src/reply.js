@@ -83,7 +83,9 @@ export async function generateReply({ tenant, chatJid, userText, customerName })
     });
     log.debug({ matches: chunks.length }, "kb retrieval done");
     const userMsgs = history.filter((m) => m.role === "user").slice(-3).map((m) => m.content.slice(0, 120));
-    if (userMsgs.length) tenant.memory = `Recently asked: ${userMsgs.join(" | ")}`;
+    const profile = await db.contactProfile(tenant.id, chatJid).catch(() => null);
+    const longTerm = profile?.summary ? `Past context: ${profile.summary}. ` : "";
+    if (userMsgs.length) tenant.memory = `${longTerm}Recently asked: ${userMsgs.join(" | ")}`;
     const raw = await chatCompletion(buildMessages({ tenant, chunks, history, userText, customerName: name, firstReply }));
     if (isNoAnswer(raw)) {
       text = tenant.fallback_message;
@@ -110,13 +112,46 @@ export async function generateReply({ tenant, chatJid, userText, customerName })
     text = text.replace(/\n?LEAD:\s*(yes|no)\s*(?:[-–—]\s*(.*))?\s*$/i, "").trim();
     markLead(tenant.id, chatJid, leadFlag, reason).catch(() => {});
   }
+  // human-request detection: model appends HUMAN:yes when the customer wants a person or is frustrated
+  const humanMatch = text.match(/\n?HUMAN:\s*yes\s*(?:[-–—]\s*(.*))?\s*$/i);
+  if (humanMatch) {
+    text = text.replace(/\n?HUMAN:\s*yes\s*(?:[-–—]\s*(.*))?\s*$/i, "").trim();
+    db.flagHumanRequested(tenant.id, chatJid).catch(() => {});
+    db.pauseChat(tenant.id, chatJid, (tenant.auto_resume_minutes ?? 1440) / 60).catch(() => {});
+  }
   text = enforceFirstGreeting(text, name, firstReply);
+
+  if (tenant.reply_guard && grounded && text && text !== tenant.fallback_message) {
+    try {
+      const guarded = await guardReply(text);
+      if (guarded) text = guarded;
+    } catch { /* guard is best-effort — original reply always goes out */ }
+  }
 
   const save = () => withRetry(
     () => db.saveMessage({ tenant_id: tenant.id, chat_jid: chatJid, role: "assistant", content: text, grounded }),
     log,
   );
   return { text, grounded, save };
+}
+
+// persist a rolling per-contact memory after replies (local, no extra LLM call)
+export async function persistMemory(tenantId, chatJid, userText) {
+  try {
+    const profile = await db.contactProfile(tenantId, chatJid);
+    const prev = profile?.summary ?? "";
+    const merged = `${prev ? prev + " | " : ""}${userText.slice(0, 100)}`.slice(-600);
+    await db.saveContactSummary(tenantId, chatJid, merged);
+  } catch { /* memory is best-effort */ }
+}
+
+async function guardReply(text) {
+  const out = await chatCompletion([
+    { role: "system", content: "You are a reply polisher for a WhatsApp business assistant. Rewrite the reply to be concise, warm and on-brand. Remove repetition or rambling. Never add new information, never answer the question yourself, never refuse. Reply with ONLY the polished message, nothing else." },
+    { role: "user", content: text },
+  ]);
+  const t = String(out ?? "").trim();
+  return t && t.length > 1 && !isNoAnswer(t) ? t : null;
 }
 
 // contact memory: rolling summary of what the customer asked about (no extra LLM call)

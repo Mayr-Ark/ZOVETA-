@@ -218,3 +218,45 @@ export async function recentActivity(tenantId, limit = 8) {
     at: r.created_at,
   }));
 }
+
+export async function createScheduledSends(rows) {
+  return unwrap(await supabase.from("scheduled_sends").insert(rows).select("id, chat_jid, scheduled_at"));
+}
+export async function dueScheduledSends(limit) {
+  return unwrap(await supabase.from("scheduled_sends").select("*").eq("status", "pending").lte("scheduled_at", new Date().toISOString()).order("scheduled_at", { ascending: true }).limit(limit));
+}
+export async function markScheduledSend(id, status, lastError = null, attempts = null) {
+  const patch = { status, last_error: lastError };
+  if (attempts !== null) patch.attempts = attempts;
+  return unwrap(await supabase.from("scheduled_sends").update(patch).eq("id", id));
+}
+export async function cancelScheduledSend(tenantId, id) {
+  return unwrap(await supabase.from("scheduled_sends").update({ status: "cancelled" }).eq("tenant_id", tenantId).eq("id", id).select().maybeSingle());
+}
+export async function listScheduledSends(tenantId) {
+  return unwrap(await supabase.from("scheduled_sends").select("id, chat_jid, kind, status, attempts, last_error, scheduled_at, created_at").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(50));
+}
+export async function sendsLastHour(tenantId) {
+  const rows = unwrap(await supabase.from("scheduled_sends").select("id").eq("tenant_id", tenantId).eq("status", "sent").gte("created_at", new Date(Date.now() - 3600e3).toISOString()));
+  return rows.length;
+}
+export async function contactProfile(tenantId, chatJid) {
+  return unwrap(await supabase.from("contact_profiles").select("name, summary, human_requested").eq("tenant_id", tenantId).eq("jid", chatJid).maybeSingle());
+}
+export async function saveContactSummary(tenantId, chatJid, summary) {
+  return unwrap(await supabase.from("contact_profiles").update({ summary }).eq("tenant_id", tenantId).eq("jid", chatJid));
+}
+export async function flagHumanRequested(tenantId, chatJid) {
+  return unwrap(await supabase.from("contact_profiles").update({ human_requested: true }).eq("tenant_id", tenantId).eq("jid", chatJid));
+}
+export async function searchMessages(tenantId, query, limit = 30) {
+  return unwrap(await supabase.from("messages").select("chat_jid, role, content, created_at").eq("tenant_id", tenantId).ilike("content", `%${query.replace(/[%_]/g, "")}%`).order("created_at", { ascending: false }).limit(limit));
+}
+export async function lastUserMessageAt(tenantId, chatJid) {
+  const rows = unwrap(await supabase.from("messages").select("created_at").eq("tenant_id", tenantId).eq("chat_jid", chatJid).eq("role", "user").order("created_at", { ascending: false }).limit(1));
+  return rows[0]?.created_at ?? null;
+}
+
+export async function listTenantContactsAll(tenantId) {
+  return unwrap(await supabase.rpc("list_tenant_contacts", { p_tenant_id: tenantId, p_offset: 0, p_limit: 1000 }));
+}

@@ -55,7 +55,9 @@ export function createApi(sessions) {
   }));
 
   app.patch("/tenants/:id", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
-    const allowed = ["name", "fallback_message", "persona", "status", "business_hours", "out_of_hours_message", "language"];
+    const allowed = ["name", "fallback_message", "persona", "status", "business_hours", "out_of_hours_message", "language", "ai_enabled", "reply_guard", "auto_resume_minutes"];
+    if (req.body?.auto_resume_minutes !== undefined && (![30, 60, 120, 240, 1440].includes(req.body.auto_resume_minutes)))
+      return res.status(400).json({ error: "auto_resume_minutes must be one of 30, 60, 120, 240, 1440" });
     const patch = Object.fromEntries(Object.entries(req.body ?? {}).filter(([k]) => allowed.includes(k)));
     if (patch.status && !["active", "paused"].includes(patch.status)) return res.status(400).json({ error: "status must be 'active' or 'paused'" });
     const tenant = await db.updateTenant(req.tenant.id, patch);
@@ -187,4 +189,67 @@ export function createApi(sessions) {
     res.status(500).json({ error: err.message });
   });
   return app;
+
+  // ---------- campaigns: broadcasts & follow-ups ----------
+  app.post("/tenants/:id/broadcasts", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
+    const { message, audience = "all" } = req.body ?? {};
+    if (!message || typeof message !== "string" || message.length < 2) return res.status(400).json({ error: "message is required" });
+    if (!["all", "leads"].includes(audience)) return res.status(400).json({ error: "audience must be 'all' or 'leads'" });
+    const contacts = await db.listTenantContactsAll(req.tenant.id);
+    const targets = audience === "leads" ? contacts.filter((c) => c.is_lead) : contacts;
+    if (targets.length === 0) return res.json({ scheduled: 0, note: audience === "leads" ? "No leads yet" : "No contacts yet" });
+    const now = Date.now();
+    const rows = targets.map((c, i) => ({
+      tenant_id: req.tenant.id,
+      chat_jid: c.jid,
+      content: message.replaceAll("{name}", c.name && !/^\d+$/.test(c.name) ? c.name.split(" ")[0] : "there"),
+      kind: "broadcast",
+      scheduled_at: new Date(now + (i + 1) * 90_000).toISOString(), // 90s stagger, anti-ban
+    }));
+    const created = await db.createScheduledSends(rows);
+    res.json({ scheduled: created.length, first_at: created[0]?.scheduled_at });
+  }));
+
+  app.post("/tenants/:id/followups", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
+    const { message, stale_days = 7 } = req.body ?? {};
+    if (!message || typeof message !== "string") return res.status(400).json({ error: "message is required" });
+    if (stale_days < 1 || stale_days > 90) return res.status(400).json({ error: "stale_days must be 1-90" });
+    const contacts = await db.listTenantContactsAll(req.tenant.id);
+    const cutoff = Date.now() - stale_days * 86400e3;
+    const stale = [];
+    for (const c of contacts.slice(0, 200)) {
+      if (c.is_lead === true) continue; // leads get personal follow-up, not a campaign
+      const last = await db.lastUserMessageAt(req.tenant.id, c.jid);
+      const lastMs = last ? new Date(last).getTime() : 0;
+      if (lastMs < cutoff) stale.push(c);
+    }
+    const now = Date.now();
+    // spread over 24h with random gaps, anti-ban
+    const perHour = Math.max(1, Math.ceil(stale.length / 24));
+    const rows = stale.map((c, i) => ({
+      tenant_id: req.tenant.id,
+      chat_jid: c.jid,
+      content: message.replaceAll("{name}", c.name && !/^\d+$/.test(c.name) ? c.name.split(" ")[0] : "there"),
+      kind: "followup",
+      scheduled_at: new Date(now + Math.floor(i / perHour) * 3600e3 + Math.floor(Math.random() * 3600e3)).toISOString(),
+    }));
+    const created = await db.createScheduledSends(rows);
+    res.json({ scheduled: created.length, targets: stale.length });
+  }));
+
+  app.get("/tenants/:id/scheduled", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
+    res.json(await db.listScheduledSends(req.tenant.id));
+  }));
+
+  app.delete("/tenants/:id/scheduled/:jobId", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
+    const job = await db.cancelScheduledSend(req.tenant.id, req.params.jobId);
+    if (!job) return res.status(404).json({ error: "job not found" });
+    res.json(job);
+  }));
+
+  app.get("/tenants/:id/search", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
+    const q = String(req.query.q ?? "").trim();
+    if (q.length < 2) return res.json([]);
+    res.json(await db.searchMessages(req.tenant.id, q));
+  }));
 }

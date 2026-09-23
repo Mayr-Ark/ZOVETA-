@@ -49,3 +49,7 @@ as $$
   offset greatest(p_offset, 0)
   limit least(greatest(p_limit, 1), 200);
 $$;
+
+-- allow the pro plan
+alter table tenants drop constraint if exists tenants_plan_check;
+alter table tenants add constraint tenants_plan_check check (plan in ('free', 'starter', 'basic', 'pro'));

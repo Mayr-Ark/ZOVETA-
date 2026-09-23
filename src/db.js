@@ -61,9 +61,10 @@ export async function insertKbChunks(rows) {
   unwrap(await supabase.from("kb_chunks").insert(rows));
 }
 
-export async function deleteKbChunks(tenantId, category, { olderThan } = {}) {
+export async function deleteKbChunks(tenantId, category, { olderThan, source } = {}) {
   let q = supabase.from("kb_chunks").delete().eq("tenant_id", tenantId);
   if (category) q = q.eq("category", category);
+  if (source) q = q.eq("source", source);
   if (olderThan !== undefined) q = q.lt("version", olderThan);
   unwrap(await q);
 }
@@ -200,4 +201,20 @@ export async function tenantStats(tenantId) {
   const bot = rows.filter((m) => m.role === "assistant");
   const total = bot.length || 1;
   return { window_days: 7, total_messages: rows.length, bot_replies: bot.length, active_chats: new Set(rows.map((m) => m.chat_jid)).size, grounded_pct: Math.round(bot.filter((m) => m.grounded).length / total * 100) };
+}
+export async function recentActivity(tenantId, limit = 8) {
+  const rows = unwrap(await supabase.from("messages").select("chat_jid, role, content, created_at").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(limit));
+  const jids = [...new Set(rows.map((r) => r.chat_jid))];
+  const contacts = jids.length
+    ? unwrap(await supabase.from("contact_profiles").select("jid, name, is_lead").eq("tenant_id", tenantId).in("jid", jids))
+    : [];
+  const byJid = new Map(contacts.map((c) => [c.jid, c]));
+  return rows.map((r) => ({
+    chat_jid: r.chat_jid,
+    name: byJid.get(r.chat_jid)?.name && !/^\d+$/.test(byJid.get(r.chat_jid).name ?? "") ? byJid.get(r.chat_jid).name : "Customer",
+    is_lead: Boolean(byJid.get(r.chat_jid)?.is_lead),
+    direction: r.role === "user" ? "customer" : r.role === "owner" ? "owner" : "bot",
+    preview: r.content,
+    at: r.created_at,
+  }));
 }

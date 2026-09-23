@@ -184,10 +184,14 @@ export function createApi(sessions) {
     res.json({ text: result.text, grounded: result.grounded });
   }));
 
+
+
   app.use((err, _req, res, _next) => {
     logger.error({ err }, "api error");
     res.status(500).json({ error: err.message });
   });
+  return app;
+
   return app;
 
   // ---------- campaigns: broadcasts & follow-ups ----------

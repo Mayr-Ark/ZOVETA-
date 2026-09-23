@@ -75,7 +75,7 @@ export function createApi(sessions) {
 
   app.patch("/tenants/:id/plan", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
     const { plan } = req.body ?? {};
-    if (!Object.hasOwn(PLANS, plan)) return res.status(400).json({ error: "plan must be 'free', 'starter', or 'basic'" });
+    if (!Object.hasOwn(PLANS, plan)) return res.status(400).json({ error: "plan must be 'free', 'starter', 'basic', or 'pro'" });
     const tenant = await db.setTenantPlan(req.tenant.id, plan);
     sessions.updateTenant(tenant);
     res.json(tenant);

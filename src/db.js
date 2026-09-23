@@ -176,4 +176,28 @@ export async function replaceExclusions(tenantId, jids) {
 export async function removeExclusion(tenantId, jid) {
   unwrap(await supabase.from("excluded_contacts").delete().eq("tenant_id", tenantId).eq("jid", jid));
 }
-
+export async function pauseChat(tenantId, jid, hours = 24) {
+  return unwrap(await supabase.from("contact_profiles").update({ paused_until: new Date(Date.now() + hours * 3600e3).toISOString() }).eq("tenant_id", tenantId).eq("jid", jid));
+}
+export async function resumeChat(tenantId, jid) {
+  return unwrap(await supabase.from("contact_profiles").update({ paused_until: null }).eq("tenant_id", tenantId).eq("jid", jid));
+}
+export async function isChatPaused(tenantId, jid) {
+  const data = unwrap(await supabase.from("contact_profiles").select("paused_until").eq("tenant_id", tenantId).eq("jid", jid).maybeSingle());
+  return Boolean(data?.paused_until && new Date(data.paused_until) > new Date());
+}
+export async function markLead(tenantId, jid, isLead, reason) {
+  return unwrap(await supabase.from("contact_profiles").update({ is_lead: isLead, lead_reason: reason ?? null }).eq("tenant_id", tenantId).eq("jid", jid));
+}
+export async function setLeadStage(tenantId, jid, stage) {
+  return unwrap(await supabase.from("contact_profiles").update({ lead_stage: stage }).eq("tenant_id", tenantId).eq("jid", jid));
+}
+export async function listLeads(tenantId) {
+  return unwrap(await supabase.from("contact_profiles").select("jid, name, lead_stage, lead_reason, last_message_at, message_count").eq("tenant_id", tenantId).eq("is_lead", true).order("last_message_at", { ascending: false }).limit(200));
+}
+export async function tenantStats(tenantId) {
+  const rows = unwrap(await supabase.from("messages").select("role, grounded, chat_jid").eq("tenant_id", tenantId).gte("created_at", new Date(Date.now() - 7 * 864e5).toISOString()).limit(5000));
+  const bot = rows.filter((m) => m.role === "assistant");
+  const total = bot.length || 1;
+  return { window_days: 7, total_messages: rows.length, bot_replies: bot.length, active_chats: new Set(rows.map((m) => m.chat_jid)).size, grounded_pct: Math.round(bot.filter((m) => m.grounded).length / total * 100) };
+}

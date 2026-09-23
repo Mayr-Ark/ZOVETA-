@@ -55,7 +55,7 @@ export function createApi(sessions) {
   }));
 
   app.patch("/tenants/:id", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
-    const allowed = ["name", "fallback_message", "persona", "status"];
+    const allowed = ["name", "fallback_message", "persona", "status", "business_hours", "out_of_hours_message", "language"];
     const patch = Object.fromEntries(Object.entries(req.body ?? {}).filter(([k]) => allowed.includes(k)));
     if (patch.status && !["active", "paused"].includes(patch.status)) return res.status(400).json({ error: "status must be 'active' or 'paused'" });
     const tenant = await db.updateTenant(req.tenant.id, patch);
@@ -118,6 +118,21 @@ export function createApi(sessions) {
   }));
 
   app.get("/tenants/:id/session", asyncHandler(loadTenant), (req, res) => res.json(sessions.status(req.tenant.id)));
+
+  app.get("/tenants/:id/leads", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
+    res.json(await db.listLeads(req.tenant.id));
+  }));
+  app.patch("/tenants/:id/leads/:jid", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
+    const stage = String(req.body?.stage ?? "new");
+    if (!["new", "contacted", "won", "lost"].includes(stage)) return res.status(400).json({ error: "stage must be new|contacted|won|lost" });
+    res.json(await db.setLeadStage(req.tenant.id, req.params.jid, stage));
+  }));
+  app.post("/tenants/:id/chats/:jid/resume", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
+    res.json(await db.resumeChat(req.tenant.id, req.params.jid));
+  }));
+  app.get("/tenants/:id/stats", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
+    res.json(await db.tenantStats(req.tenant.id));
+  }));
   app.post("/tenants/:id/session/restart", asyncHandler(loadTenant), asyncHandler(async (req, res) => {
     await sessions.stopTenant(req.tenant.id);
     const session = await sessions.startTenant(req.tenant);

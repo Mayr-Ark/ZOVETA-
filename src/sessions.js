@@ -87,7 +87,16 @@ class TenantSession {
     for (const msg of messages) {
       const text = extractText(msg);
       const from = msg.key?.remoteJid;
-      if (!text || !from || msg.key.fromMe) continue;
+      if (!text || !from) continue;
+      if (msg.key.fromMe) {
+        if (isJidGroup(from) || isJidBroadcast(from) || isJidNewsletter(from)) continue;
+        const ownerJid = jidNormalizedUser(from);
+        db.saveMessage({ tenant_id: this.tenant.id, chat_jid: ownerJid, role: "owner", content: text }).catch(() => {});
+        db.pauseChat(this.tenant.id, ownerJid, 24)
+          .then(() => this.log.info({ chatJid: ownerJid }, "owner replied from phone — AI paused 24h for this chat"))
+          .catch((err) => this.log.warn({ err }, "failed to pause chat after owner reply"));
+        continue;
+      }
       if (isJidGroup(from) || isJidBroadcast(from) || isJidNewsletter(from)) continue;
       const chatJid = jidNormalizedUser(from);
       const customerName = msg.pushName || null;
@@ -97,7 +106,11 @@ class TenantSession {
 
   whatsAppAdapter() {
     return createChannelAdapter({
-      sendText: (chatId, text) => this.sock.sendMessage(chatId, { text }),
+      sendText: async (chatId, text) => {
+        const jitter = 800 + Math.floor(Math.random() * 1700); // 0.8s–2.5s human-like pause
+        await new Promise((r) => setTimeout(r, jitter));
+        return this.sock.sendMessage(chatId, { text });
+      },
       setComposing: (chatId) => this.sock.sendPresenceUpdate("composing", chatId).catch(() => {}),
     });
   }
@@ -111,6 +124,7 @@ class TenantSession {
 
   async handleIncoming({ channel, channelChatId, chatJid, text, customerName }) {
     if (this.tenant.status !== "active" || await db.isExcluded(this.tenant.id, chatJid)) return;
+    if (await db.isChatPaused(this.tenant.id, chatJid)) return this.log.info({ chatJid }, "chat paused (human handoff) — AI stays silent");
     this.log.info({ chatJid, text }, "incoming message");
     db.upsertContact(this.tenant.id, chatJid, customerName)
       .catch((err) => this.log.warn({ err, chatJid }, "failed to save contact profile"));

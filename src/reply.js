@@ -4,6 +4,7 @@ import { embedText } from "./embeddings.js";
 import { chatCompletion } from "./llm.js";
 import { logger } from "./logger.js";
 import { CREDITS_PER_REPLY, getPlan, LIMIT_REPLY, retentionLimit } from "./plans.js";
+import { markLead } from "./db.js";
 import { buildMessages, isNoAnswer } from "./prompt.js";
 
 const SAVE_RETRIES = 5;
@@ -58,6 +59,19 @@ export async function generateReply({ tenant, chatJid, userText, customerName })
   }
   tenant.credits = balance;
 
+  // business hours: outside them (when configured), reply with the out-of-hours message
+  const bh = tenant.business_hours;
+  if (bh?.open != null && bh?.close != null) {
+    const lagos = new Date(Date.now() + 3600e3); // Africa/Lagos = UTC+1
+    const hour = lagos.getUTCHours() + lagos.getUTCMinutes() / 60;
+    const open = Number(bh.open), close = Number(bh.close);
+    const inHours = open <= close ? hour >= open && hour < close : hour >= open || hour < close;
+    if (!inHours) {
+      const text = enforceFirstGreeting(tenant.out_of_hours_message || tenant.fallback_message, name, firstReply);
+      return { text, grounded: false, save: () => withRetry(() => db.saveMessage({ tenant_id: tenant.id, chat_jid: chatJid, role: "assistant", content: text, grounded: false }), log) };
+    }
+  }
+
   let chunks = [];
   let text;
   let grounded = false;
@@ -68,6 +82,8 @@ export async function generateReply({ tenant, chatJid, userText, customerName })
       threshold: config.kbMatchThreshold,
     });
     log.debug({ matches: chunks.length }, "kb retrieval done");
+    const userMsgs = history.filter((m) => m.role === "user").slice(-3).map((m) => m.content.slice(0, 120));
+    if (userMsgs.length) tenant.memory = `Recently asked: ${userMsgs.join(" | ")}`;
     const raw = await chatCompletion(buildMessages({ tenant, chunks, history, userText, customerName: name, firstReply }));
     if (isNoAnswer(raw)) {
       text = tenant.fallback_message;
@@ -84,6 +100,16 @@ export async function generateReply({ tenant, chatJid, userText, customerName })
     text = tenant.fallback_message;
     grounded = false;
   }
+
+  // lead detection: model appends LEAD:yes/no on its own line — strip it and record
+  let leadFlag = null;
+  const leadMatch = text.match(/\n?LEAD:\s*(yes|no)\s*(?:[-–—]\s*(.*))?\s*$/i);
+  if (leadMatch) {
+    leadFlag = leadMatch[1].toLowerCase() === "yes";
+    const reason = (leadMatch[2] ?? "").trim() || null;
+    text = text.replace(/\n?LEAD:\s*(yes|no)\s*(?:[-–—]\s*(.*))?\s*$/i, "").trim();
+    markLead(tenant.id, chatJid, leadFlag, reason).catch(() => {});
+  }
   text = enforceFirstGreeting(text, name, firstReply);
 
   const save = () => withRetry(
@@ -91,4 +117,11 @@ export async function generateReply({ tenant, chatJid, userText, customerName })
     log,
   );
   return { text, grounded, save };
+}
+
+// contact memory: rolling summary of what the customer asked about (no extra LLM call)
+export async function contactMemory(tenantId, chatJid) {
+  const rows = await db.recentMessages(tenantId, chatJid, 12);
+  const userMsgs = rows.filter((m) => m.role === "user").slice(-3).map((m) => m.content.slice(0, 120));
+  return userMsgs.length ? `Recently asked: ${userMsgs.join(" | ")}` : "";
 }
